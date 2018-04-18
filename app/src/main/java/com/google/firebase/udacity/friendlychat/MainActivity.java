@@ -15,7 +15,12 @@
  */
 package com.google.firebase.udacity.friendlychat;
 
+import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.net.Uri;
 import android.os.Bundle;
+import android.support.annotation.NonNull;
 import android.support.v7.app.AppCompatActivity;
 import android.text.Editable;
 import android.text.InputFilter;
@@ -40,6 +45,8 @@ import com.google.firebase.database.DatabaseError;
 import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
 
+import java.io.FileNotFoundException;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -51,6 +58,7 @@ public class MainActivity extends AppCompatActivity {
     public static final String ANONYMOUS = "anonymous";
     public static final int DEFAULT_MSG_LENGTH_LIMIT = 1000;
 
+    public static final int IMG_PICK_INTENT_ID = 200;
     //RC = Request Code
     public static final int RC_SIGN_IN = 1;
 
@@ -100,6 +108,10 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onClick(View view) {
                 // TODO: Fire an intent to show an image picker
+                Intent imagePickIntent = new Intent(Intent.ACTION_PICK);
+                imagePickIntent.setType("image/*");
+                startActivityForResult(imagePickIntent, IMG_PICK_INTENT_ID );
+
             }
         });
 
@@ -136,34 +148,7 @@ public class MainActivity extends AppCompatActivity {
                 mMessageEditText.setText("");
             }
         });
-        mChildEventListener = new ChildEventListener() {
-            @Override
-            public void onChildAdded(DataSnapshot dataSnapshot, String s) {
-               FriendlyMessage friendlyMsg = dataSnapshot.getValue(FriendlyMessage.class);
-               mMessageAdapter.add(friendlyMsg);
-            }
 
-            @Override
-            public void onChildChanged(DataSnapshot dataSnapshot, String s) {
-
-            }
-
-            @Override
-            public void onChildRemoved(DataSnapshot dataSnapshot) {
-
-            }
-
-            @Override
-            public void onChildMoved(DataSnapshot dataSnapshot, String s) {
-
-            }
-
-            @Override
-            public void onCancelled(DatabaseError databaseError) {
-
-            }
-        };
-        mMessagesDbRef.addChildEventListener(mChildEventListener);
         mAuthStateListener = new FirebaseAuth.AuthStateListener() {
             @Override
             public void onAuthStateChanged(@NonNull FirebaseAuth firebaseAuth) {
@@ -171,10 +156,12 @@ public class MainActivity extends AppCompatActivity {
                 if (user != null){
                     //toast
                     Toast.makeText(MainActivity.this, "You're signed in. Welcome to FriendlyChat!", Toast.LENGTH_SHORT).show();
+                    onSignedInInitialize(user.getDisplayName());
                 }
                 else{
                     //launch login
                     //smartLockAllowsSavingCredentialsBetweenSeshs
+                    onSignedOutCleanup();
                     startActivityForResult(
                             AuthUI.getInstance()
                                     .createSignInIntentBuilder()
@@ -190,6 +177,88 @@ public class MainActivity extends AppCompatActivity {
     }
 
     @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        switch (requestCode){
+            case RC_SIGN_IN:
+                if (resultCode == RESULT_OK){
+                    Toast.makeText(this, "Signed in!", Toast.LENGTH_SHORT).show();
+
+                }else if (resultCode == RESULT_CANCELED){
+                    Toast.makeText(this, "sign in cancelled", Toast.LENGTH_SHORT).show();
+                    finish();
+                }
+            case IMG_PICK_INTENT_ID:
+                if (resultCode == RESULT_OK){
+                    try {
+                        final Uri imgUri = data.getData();
+                        final InputStream imgStream = getContentResolver().openInputStream(imgUri);
+                        final Bitmap selectedImg = BitmapFactory.decodeStream(imgStream);
+                        mPhotoPickerButton.setImageBitmap(selectedImg);
+                    } catch (FileNotFoundException e){
+                        e.printStackTrace();
+                    }
+                }
+        }
+
+    }
+
+
+    private void onSignedInInitialize(String username){
+        mUsername = username;
+        attachDbReadListener();
+
+    }
+
+    private void onSignedOutCleanup(){
+        mUsername = ANONYMOUS;
+        mMessageAdapter.clear();
+        detachDbReadListener();
+
+    }
+
+    private void attachDbReadListener(){
+        if (mChildEventListener == null){
+            mChildEventListener = new ChildEventListener() {
+                @Override
+                public void onChildAdded(DataSnapshot dataSnapshot, String s) {
+                    FriendlyMessage friendlyMsg = dataSnapshot.getValue(FriendlyMessage.class);
+                    mMessageAdapter.add(friendlyMsg);
+                }
+
+                @Override
+                public void onChildChanged(DataSnapshot dataSnapshot, String s) {
+
+                }
+
+                @Override
+                public void onChildRemoved(DataSnapshot dataSnapshot) {
+
+                }
+
+                @Override
+                public void onChildMoved(DataSnapshot dataSnapshot, String s) {
+
+                }
+
+                @Override
+                public void onCancelled(DatabaseError databaseError) {
+
+                }
+            };
+            mMessagesDbRef.addChildEventListener(mChildEventListener);
+        }
+
+
+    }
+
+    private  void detachDbReadListener(){
+        if (mChildEventListener != null){
+            mMessagesDbRef.removeEventListener(mChildEventListener);
+            mChildEventListener = null;
+        }
+    }
+    @Override
     public boolean onCreateOptionsMenu(Menu menu) {
         MenuInflater inflater = getMenuInflater();
         inflater.inflate(R.menu.main_menu, menu);
@@ -198,18 +267,30 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
-        return super.onOptionsItemSelected(item);
+        switch (item.getItemId()){
+            case R.id.sign_out_menu:
+                AuthUI.getInstance().signOut(this);
+                return true;
+            default:
+                return super.onOptionsItemSelected(item);
+        }
     }
 
     @Override
     protected void onPause() {
         super.onPause();
-        mFirebaseAuth.removeAuthStateListener(mAuthStateListener);
+        if (mAuthStateListener != null){
+            mFirebaseAuth.removeAuthStateListener(mAuthStateListener);
+        }
+        detachDbReadListener();
+        mMessageAdapter.clear();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+
         mFirebaseAuth.addAuthStateListener(mAuthStateListener);
     }
+
 }
